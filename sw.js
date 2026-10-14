@@ -1,12 +1,11 @@
-const CACHE_NAME = 'nf-app-v8'; // 💡 キャッシュ更新のため v8 に変更
+const CACHE_NAME = 'nf-app-v9'; // 💡 v9に上げてキャッシュ更新
 
-// 事前キャッシュ対象リスト
 const ASSETS = [
   './',
   './index.html',
   './input.html',
   './viewer.html',
-  './history.html', // 💡 history.html を追加
+  './history.html',
   './style.css',
   './app.js',
   './viewer.js',
@@ -14,7 +13,6 @@ const ASSETS = [
   './apple-touch-icon.png'
 ];
 
-// インストール処理
 self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
@@ -22,7 +20,6 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// アクティベート処理（古いキャッシュの自動破棄）
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
@@ -35,9 +32,13 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// フェッチ処理（HTMLは Network-First、その他静的ファイルは Cache-First）
 self.addEventListener('fetch', (event) => {
   if (!event.request.url.startsWith('http')) return;
+
+  // 💡【追加】Firebase への通信は Service Worker を通さず直接ネットワークに流す
+  if (event.request.url.includes('firebasedatabase.app')) {
+    return;
+  }
 
   if (event.request.mode === 'navigate') {
     event.respondWith(

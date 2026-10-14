@@ -73,6 +73,7 @@
         const res = await fetch(`${HISTORY_DB_URL}.json`);
         const data = await res.json() || {};
         
+        // オブジェクト配列に整形
         historyLogs = Object.keys(data).map(key => ({ key, ...data[key] }));
         renderHistory();
       } catch (err) {
@@ -80,33 +81,33 @@
       }
     }
 
-    // 💡【追加機能】既存の moneyLogs データを一括で moneyLogsHistory にコピー（初期同期）
+    // 💡 既存の moneyLogs データを一括で moneyLogsHistory に同期
     async function syncExistingToHistory() {
       try {
-        // 1. メインDB(moneyLogs)の全データ取得
         const mainRes = await fetch(`${MAIN_DB_URL}.json`);
         const mainData = await mainRes.json() || {};
         
-        // 2. 履歴DB(moneyLogsHistory)のデータ取得
         const historyRes = await fetch(`${HISTORY_DB_URL}.json`);
         const historyData = await historyRes.json() || {};
         const historyIds = new Set(Object.values(historyData).map(h => h.id).filter(Boolean));
 
         const mainItems = Object.values(mainData);
         if (mainItems.length === 0) {
-          alert("メインデータベースにもデータが存在しません");
+          alert("メインデータベース(moneyLogs)にデータが存在しません");
           return;
         }
 
         let copiedCount = 0;
         for (const item of mainItems) {
-          // まだ履歴側に入っていないデータだけを移行
-          if (item.id && !historyIds.has(item.id)) {
+          const itemId = item.id || `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          
+          if (!historyIds.has(itemId)) {
+            // セキュリティルールのバリデーション（hasChildren, isNumber, isString）を満たすペイロード
             const payload = {
-              id: item.id,
-              date: item.date,
-              amount: Number(item.amount), // バリデーション対策で確実に数値型変換
-              user: item.user || "未設定",
+              id: itemId,
+              date: item.date || new Date().toLocaleString(),
+              amount: Number(item.amount || 0), // 必須: 数値型
+              user: String(item.user || "未設定"), // 必須: 文字列型
               timestamp: item.timestamp || Date.now()
             };
 
@@ -116,16 +117,12 @@
               body: JSON.stringify(payload)
             });
 
-            if (!postRes.ok) {
-              console.error("書き込み拒否:", await postRes.text());
-            } else {
-              copiedCount++;
-            }
+            if (postRes.ok) copiedCount++;
           }
         }
 
         alert(`同期完了！ ${copiedCount}件の既存データを履歴へコピーしました。`);
-        fetchHistory(); // 再読み込みして描画
+        fetchHistory();
       } catch (err) {
         alert("初期同期エラー: " + err.message);
       }
@@ -170,14 +167,14 @@
       tbody.appendChild(fragment);
     }
 
-    // メイン画面（moneyLogs）へ未復元データのみを一括書き戻し
+    // メイン画面（moneyLogs）へ差分書き戻し
     async function restoreToMainDB() {
       if (historyLogs.length === 0) {
         alert("復元対象の履歴データがありません");
         return;
       }
 
-      if (!confirm(`全履歴（${historyLogs.length}件）をメイン画面のデータベースに復元（差分追加）しますか？`)) {
+      if (!confirm(`全履歴（${historyLogs.length}件）をメイン画面のデータベースに復元しますか？`)) {
         return;
       }
 
@@ -188,17 +185,20 @@
 
         let restoredCount = 0;
         for (const log of historyLogs) {
-          if (!existingIds.has(log.id)) {
+          const logId = log.id || log.key;
+          if (!existingIds.has(logId)) {
+            const payload = {
+              id: logId,
+              date: log.date || new Date().toLocaleString(),
+              amount: Number(log.amount || 0),
+              user: String(log.user || "未設定"),
+              timestamp: log.timestamp || Date.now()
+            };
+
             await fetch(`${MAIN_DB_URL}.json`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                id: log.id,
-                date: log.date,
-                amount: Number(log.amount),
-                user: log.user,
-                timestamp: log.timestamp || Date.now()
-              })
+              body: JSON.stringify(payload)
             });
             restoredCount++;
           }

@@ -1,10 +1,12 @@
-const CACHE_NAME = 'nf-app-v7';
+const CACHE_NAME = 'nf-app-v8'; // 💡 キャッシュ更新のため v8 に変更
 
 // 事前キャッシュ対象リスト
 const ASSETS = [
   './',
   './index.html',
   './input.html',
+  './viewer.html',
+  './history.html', // 💡 history.html を追加
   './style.css',
   './app.js',
   './viewer.js',
@@ -37,25 +39,21 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (!event.request.url.startsWith('http')) return;
 
-  // 1. HTML（ページ遷移）リクエストは Network-First（最新版を優先取得）
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
-          // ネットワーク取得成功時はキャッシュを更新
           const responseClone = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
           return networkResponse;
         })
         .catch(() => {
-          // オフライン時はキャッシュから返す
           return caches.match(event.request, { ignoreSearch: true });
         })
     );
     return;
   }
 
-  // 2. その他の静的アセット（CSS, JS, 画像等）は Cache-First
   event.respondWith(
     caches.match(event.request, { ignoreSearch: true }).then((cachedResponse) => {
       if (cachedResponse) return cachedResponse;

@@ -137,8 +137,7 @@ function initRealtimeStream() {
       const rawData = res.data || {};
       remoteLogs = Object.keys(rawData).map(key => ({ key, ...rawData[key] }));
     } else {
-      // 💡【修正箇所】キーの階層分解（split）で正しくオブジェクト識別
-      const key = res.path.split('/')[1];
+      const key = res.path.replace('/', '');
       if (res.data === null) {
         remoteLogs = remoteLogs.filter(item => item.key !== key);
       } else {

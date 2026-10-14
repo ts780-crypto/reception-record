@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>全履歴アーカイブ・復元</title>
+  <link rel="stylesheet" href="style.css?v=1">
+  <style>
+    .backup-bar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body ontouchstart="">
+
+  <!-- ヘッダー -->
+  <div class="header-bar">
+    <h2>全履歴アーカイブ</h2>
+    <a href="viewer.html" class="header-nav-link">← 集計画面</a>
+  </div>
+
+  <!-- 集計カード -->
+  <div class="summary-box">
+    <div class="summary-card">
+      <div class="summary-label">累計記録件数</div>
+      <div class="summary-value" id="historyCount">0 <span class="unit">件</span></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">累計総金額</div>
+      <div class="summary-value" id="historyAmount">0 <span class="unit">円</span></div>
+    </div>
+  </div>
+
+  <!-- 操作ボタン -->
+  <div class="backup-bar">
+    <button type="button" class="btn-action" style="background-color: var(--primary); color: white; border: none;" onclick="restoreToMainDB()">🔄 メイン画面へデータ復元</button>
+    <button type="button" class="btn-action" onclick="downloadCSV()">📥 全履歴CSV出力</button>
+  </div>
+
+  <!-- 履歴テーブル -->
+  <h3>全打刻ログ（削除不能な永久記録）</h3>
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr>
+          <th>日時</th>
+          <th>金額(円)</th>
+          <th>担当者</th>
+        </tr>
+      </thead>
+      <tbody id="historyTableBody">
+        <tr><td colspan="3">読み込み中...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    const MAIN_DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.firebasedatabase.app/moneyLogs";
+    const HISTORY_DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.firebasedatabase.app/moneyLogsHistory";
+    let historyLogs = [];
+
+    window.onload = function() {
+      fetchHistory();
+    };
+
+    // アーカイブ全データの読み込み
+    async function fetchHistory() {
+      try {
+        const res = await fetch(`${HISTORY_DB_URL}.json`);
+        const data = await res.json() || {};
+        
+        historyLogs = Object.keys(data).map(key => ({ key, ...data[key] }));
+        renderHistory();
+      } catch (err) {
+        alert("履歴データの取得に失敗しました: " + err.message);
+      }
+    }
+
+    // 画面描画
+    function renderHistory() {
+      const tbody = document.getElementById('historyTableBody');
+      const count = historyLogs.length;
+      const sum = historyLogs.reduce((acc, cur) => acc + Number(cur.amount || 0), 0);
+
+      document.getElementById('historyCount').innerHTML = `${count} <span class="unit">件</span>`;
+      document.getElementById('historyAmount').innerHTML = `${sum.toLocaleString()} <span class="unit">円</span>`;
+
+      const fragment = document.createDocumentFragment();
+      const logsToRender = historyLogs.slice().reverse();
+
+      logsToRender.forEach(item => {
+        const tr = document.createElement('tr');
+        
+        const tdDate = document.createElement('td');
+        tdDate.textContent = item.date;
+
+        const tdAmount = document.createElement('td');
+        tdAmount.textContent = item.amount;
+
+        const tdUser = document.createElement('td');
+        tdUser.textContent = item.user || "未設定";
+
+        tr.appendChild(tdDate);
+        tr.appendChild(tdAmount);
+        tr.appendChild(tdUser);
+        fragment.appendChild(tr);
+      });
+
+      tbody.innerHTML = '';
+      tbody.appendChild(fragment);
+    }
+
+    // 💡 メイン画面（moneyLogs）へ未復元データのみを一括書き戻し
+    async function restoreToMainDB() {
+      if (historyLogs.length === 0) {
+        alert("復元対象の履歴データがありません");
+        return;
+      }
+
+      if (!confirm(`全履歴（${historyLogs.length}件）をメイン画面のデータベースに復元（差分追加）しますか？`)) {
+        return;
+      }
+
+      try {
+        // 現在メイン側に残っているデータのIDを取得（二重登録を防止）
+        const mainRes = await fetch(`${MAIN_DB_URL}.json`);
+        const mainData = await mainRes.json() || {};
+        const existingIds = new Set(Object.values(mainData).map(m => m.id).filter(Boolean));
+
+        let restoredCount = 0;
+        for (const log of historyLogs) {
+          if (!existingIds.has(log.id)) {
+            await fetch(`${MAIN_DB_URL}.json`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: log.id,
+                date: log.date,
+                amount: log.amount,
+                user: log.user,
+                timestamp: log.timestamp || Date.now()
+              })
+            });
+            restoredCount++;
+          }
+        }
+
+        alert(`復元処理が完了しました！（新規追加: ${restoredCount}件）`);
+      } catch (err) {
+        alert("復元中にエラーが発生しました: " + err.message);
+      }
+    }
+
+    // CSV出力
+    function downloadCSV() {
+      if (historyLogs.length === 0) {
+        alert("データがありません");
+        return;
+      }
+
+      let csvContent = '\uFEFF日時,金額,担当者\n';
+      historyLogs.forEach(item => {
+        csvContent += `"${item.date}",${item.amount},"${item.user || ''}"\n`;
+      });
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `全受付履歴アーカイブ_${Date.now()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>

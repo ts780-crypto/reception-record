@@ -8,6 +8,7 @@
   <style>
     .backup-bar {
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 16px;
     }
@@ -35,8 +36,9 @@
 
   <!-- 操作ボタン -->
   <div class="backup-bar">
+    <button type="button" class="btn-action" style="background-color: #2563eb; color: white; border: none;" onclick="syncExistingToHistory()">📥 既存データを履歴へ初期同期</button>
     <button type="button" class="btn-action" style="background-color: var(--primary); color: white; border: none;" onclick="restoreToMainDB()">🔄 メイン画面へデータ復元</button>
-    <button type="button" class="btn-action" onclick="downloadCSV()">📥 全履歴CSV出力</button>
+    <button type="button" class="btn-action" onclick="downloadCSV()">CSV出力</button>
   </div>
 
   <!-- 履歴テーブル -->
@@ -78,6 +80,57 @@
       }
     }
 
+    // 💡【追加機能】既存の moneyLogs データを一括で moneyLogsHistory にコピー（初期同期）
+    async function syncExistingToHistory() {
+      try {
+        // 1. メインDB(moneyLogs)の全データ取得
+        const mainRes = await fetch(`${MAIN_DB_URL}.json`);
+        const mainData = await mainRes.json() || {};
+        
+        // 2. 履歴DB(moneyLogsHistory)のデータ取得
+        const historyRes = await fetch(`${HISTORY_DB_URL}.json`);
+        const historyData = await historyRes.json() || {};
+        const historyIds = new Set(Object.values(historyData).map(h => h.id).filter(Boolean));
+
+        const mainItems = Object.values(mainData);
+        if (mainItems.length === 0) {
+          alert("メインデータベースにもデータが存在しません");
+          return;
+        }
+
+        let copiedCount = 0;
+        for (const item of mainItems) {
+          // まだ履歴側に入っていないデータだけを移行
+          if (item.id && !historyIds.has(item.id)) {
+            const payload = {
+              id: item.id,
+              date: item.date,
+              amount: Number(item.amount), // バリデーション対策で確実に数値型変換
+              user: item.user || "未設定",
+              timestamp: item.timestamp || Date.now()
+            };
+
+            const postRes = await fetch(`${HISTORY_DB_URL}.json`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            if (!postRes.ok) {
+              console.error("書き込み拒否:", await postRes.text());
+            } else {
+              copiedCount++;
+            }
+          }
+        }
+
+        alert(`同期完了！ ${copiedCount}件の既存データを履歴へコピーしました。`);
+        fetchHistory(); // 再読み込みして描画
+      } catch (err) {
+        alert("初期同期エラー: " + err.message);
+      }
+    }
+
     // 画面描画
     function renderHistory() {
       const tbody = document.getElementById('historyTableBody');
@@ -86,6 +139,11 @@
 
       document.getElementById('historyCount').innerHTML = `${count} <span class="unit">件</span>`;
       document.getElementById('historyAmount').innerHTML = `${sum.toLocaleString()} <span class="unit">円</span>`;
+
+      if (count === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" style="color: var(--text-sub); padding: 20px;">履歴データがありません。<br>「既存データを履歴へ初期同期」を押してください。</td></tr>';
+        return;
+      }
 
       const fragment = document.createDocumentFragment();
       const logsToRender = historyLogs.slice().reverse();
@@ -112,7 +170,7 @@
       tbody.appendChild(fragment);
     }
 
-    // 💡 メイン画面（moneyLogs）へ未復元データのみを一括書き戻し
+    // メイン画面（moneyLogs）へ未復元データのみを一括書き戻し
     async function restoreToMainDB() {
       if (historyLogs.length === 0) {
         alert("復元対象の履歴データがありません");
@@ -124,7 +182,6 @@
       }
 
       try {
-        // 現在メイン側に残っているデータのIDを取得（二重登録を防止）
         const mainRes = await fetch(`${MAIN_DB_URL}.json`);
         const mainData = await mainRes.json() || {};
         const existingIds = new Set(Object.values(mainData).map(m => m.id).filter(Boolean));
@@ -138,7 +195,7 @@
               body: JSON.stringify({
                 id: log.id,
                 date: log.date,
-                amount: log.amount,
+                amount: Number(log.amount),
                 user: log.user,
                 timestamp: log.timestamp || Date.now()
               })

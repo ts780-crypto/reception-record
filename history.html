@@ -3,16 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>全履歴アーカイブ・復元</title>
+  <title>全履歴アーカイブ</title>
   
-  <!-- 既存のCSSをそのまま使用 -->
   <link rel="stylesheet" href="style.css?v=1">
   
   <style>
     .backup-bar {
       display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
+      justify-content: flex-end;
       margin-bottom: 16px;
     }
     .status-text {
@@ -49,10 +47,9 @@
     </div>
   </div>
 
-  <!-- 操作ボタン群 -->
+  <!-- 操作ボタン -->
   <div class="backup-bar">
-    <button type="button" class="btn-action" style="background-color: var(--primary); color: #ffffff; border: none;" onclick="restoreMissingLogs()">🔄 誤削除データをメイン画面に復元</button>
-    <button type="button" class="btn-action" onclick="downloadCSV()">📥 全履歴CSV出力</button>
+    <button type="button" class="btn-action" style="max-width: 160px;" onclick="downloadCSV()">📥 全履歴CSV出力</button>
   </div>
 
   <!-- 履歴テーブル -->
@@ -73,10 +70,7 @@
   </div>
 
   <script>
-    // エンドポイント設定
-    const MAIN_DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.firebasedatabase.app/moneyLogs";
     const HISTORY_DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.firebasedatabase.app/moneyLogsHistory";
-    
     let historyLogs = [];
 
     window.onload = function() {
@@ -92,7 +86,6 @@
 
         const data = await res.json() || {};
         
-        // オブジェクトを配列に変換
         historyLogs = Object.keys(data).map(key => ({
           key,
           ...data[key]
@@ -124,7 +117,6 @@
       }
 
       const fragment = document.createDocumentFragment();
-      // 新しい順に並び替えて描画
       const logsToRender = historyLogs.slice().reverse();
 
       logsToRender.forEach(item => {
@@ -147,69 +139,6 @@
 
       tbody.innerHTML = '';
       tbody.appendChild(fragment);
-    }
-
-    // 💡 ワンクリック復元機能（moneyLogs に存在しないデータだけを補填書き戻し）
-    async function restoreMissingLogs() {
-      if (historyLogs.length === 0) {
-        alert("復元可能な履歴データが存在しません");
-        return;
-      }
-
-      const statusEl = document.getElementById('statusInfo');
-      
-      try {
-        statusEl.textContent = "復元状態を照合中...";
-
-        // 1. 現在のメインDB (moneyLogs) の状態を取得
-        const mainRes = await fetch(`${MAIN_DB_URL}.json`);
-        const mainData = await mainRes.json() || {};
-        const existingMainIds = new Set(Object.values(mainData).map(m => m.id).filter(Boolean));
-
-        // 2. メイン側に存在しない（誤って削除された）データを抽出
-        const missingLogs = historyLogs.filter(h => h.id && !existingMainIds.has(h.id));
-
-        if (missingLogs.length === 0) {
-          alert("メイン画面（moneyLogs）に未復元の削除データはありません。すべてのデータが揃っています。");
-          statusEl.textContent = "全データ同期完了（欠損データなし）";
-          return;
-        }
-
-        if (!confirm(`誤削除された可能性のあるデータが ${missingLogs.length} 件見つかりました。\nメイン画面のデータベース（moneyLogs）に復元しますか？`)) {
-          return;
-        }
-
-        statusEl.textContent = `復元中... (0/${missingLogs.length})`;
-        let restoredCount = 0;
-
-        // 3. 差分データを Firebase の moneyLogs に1件ずつ書き戻す
-        for (const log of missingLogs) {
-          const payload = {
-            id: String(log.id),
-            date: String(log.date || new Date().toLocaleString()),
-            amount: Number(log.amount || 0),  // バリデーションエラー防止用数値キャスト
-            user: String(log.user || "復元データ"),
-            timestamp: Number(log.timestamp || Date.now())
-          };
-
-          const postRes = await fetch(`${MAIN_DB_URL}.json`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-
-          if (postRes.ok) {
-            restoredCount++;
-            statusEl.textContent = `復元中... (${restoredCount}/${missingLogs.length})`;
-          }
-        }
-
-        alert(`復元が完了しました！\n計 ${restoredCount} 件のデータをメイン画面に書き戻しました。`);
-        statusEl.textContent = `復元完了: ${restoredCount} 件のデータをメインDBへ書き戻しました`;
-      } catch (err) {
-        console.error("復元処理エラー:", err);
-        alert("復元処理中にエラーが発生しました: " + err.message);
-      }
     }
 
     // CSVダウンロード処理

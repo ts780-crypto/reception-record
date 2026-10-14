@@ -1,7 +1,5 @@
 // Firebase Realtime Database REST API エンドポイント
 const DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.firebasedatabase.app/moneyLogs";
-// 削除不可の履歴アーカイブ用URL
-const HISTORY_DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.firebasedatabase.app/moneyLogsHistory";
 
 // 入力画面のパスワード設定
 const APP_PASSWORD = "nf2026";
@@ -218,37 +216,31 @@ async function syncPendingLogs() {
   try {
     const itemsToSync = [...pendingLogs];
     for (const item of itemsToSync) {
-      const payload = {
-        id: item.id,
-        date: item.date,
-        amount: item.amount,
-        user: item.user,
-        timestamp: item.timestamp || Date.now()
-      };
-
-      // 1. メイン領域（moneyLogs）へ送信
       const res = await fetch(`${DB_URL}.json`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({
+          id: item.id,
+          date: item.date,
+          amount: item.amount,
+          user: item.user,
+          timestamp: item.timestamp || Date.now()
+        })
       });
 
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
 
       const resData = await res.json();
-
-      // 2. 💡 削除不可能な履歴アーカイブ（moneyLogsHistory）へも非同期で同時保存
-      fetch(`${HISTORY_DB_URL}.json`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      }).catch(err => console.error("履歴アーカイブ送信エラー:", err));
-
+      
       if (resData && resData.name) {
         if (!remoteLogs.some(r => r.key === resData.name)) {
           remoteLogs.push({
             key: resData.name,
-            ...payload
+            id: item.id,
+            date: item.date,
+            amount: item.amount,
+            user: item.user,
+            timestamp: item.timestamp || Date.now()
           });
         }
       }

@@ -1,6 +1,6 @@
 // Firebase Realtime Database REST API エンドポイント
 const DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.firebasedatabase.app/moneyLogs";
-// 💡 削除不可の履歴アーカイブ用URLを追加
+// 💡 削除不可の履歴アーカイブ用URL
 const HISTORY_DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.firebasedatabase.app/moneyLogsHistory";
 
 // 入力画面のパスワード設定
@@ -155,7 +155,6 @@ function initRealtimeStream() {
       const rawData = res.data || {};
       remoteLogs = Object.keys(rawData).map(key => ({ key, ...rawData[key] }));
     } else {
-      // 💡【修正箇所】1階層目のIDキーを確実に取得できるように修正
       const key = res.path.split('/')[1];
       if (res.data === null) {
         remoteLogs = remoteLogs.filter(item => item.key !== key);
@@ -209,7 +208,7 @@ function updateNetworkStatus() {
   renderData();
 }
 
-// 排他制御（ロック）付き未送信データの一括同期
+// 💡 モバイル端末対応：排他制御（ロック）付き一括同期＆確実な履歴保存
 async function syncPendingLogs() {
   if (!navigator.onLine || pendingLogs.length === 0 || isSyncing) return;
 
@@ -218,12 +217,13 @@ async function syncPendingLogs() {
   try {
     const itemsToSync = [...pendingLogs];
     for (const item of itemsToSync) {
+      // Firebaseルールバリデーションを満たす型安全なペイロードを作成
       const payload = {
-        id: item.id,
-        date: item.date,
-        amount: item.amount,
-        user: item.user,
-        timestamp: item.timestamp || Date.now()
+        id: String(item.id),
+        date: String(item.date),
+        amount: Number(item.amount), // 確実に数値型へ変換
+        user: String(item.user || "未設定"),
+        timestamp: Number(item.timestamp || Date.now())
       };
 
       // 1. メイン領域へ送信
@@ -237,12 +237,16 @@ async function syncPendingLogs() {
 
       const resData = await res.json();
 
-      // 2. 💡 削除不可能な履歴アーカイブへも非同期で同時保存（バックアップ）
-      fetch(`${HISTORY_DB_URL}.json`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      }).catch(err => console.error("履歴アーカイブ送信エラー:", err));
+      // 2. 💡 スマホでの通信ドロップを防ぐため await を追加して確実に履歴保存
+      try {
+        await fetch(`${HISTORY_DB_URL}.json`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (historyErr) {
+        console.error("履歴アーカイブ送信エラー:", historyErr);
+      }
 
       if (resData && resData.name) {
         if (!remoteLogs.some(r => r.key === resData.name)) {
@@ -264,6 +268,7 @@ async function syncPendingLogs() {
     renderData();
   }
 }
+
 // --- 記録処理 ---
 function recordLog(amount) {
   const userName = document.getElementById('userName').value || "未設定";
@@ -271,10 +276,9 @@ function recordLog(amount) {
   const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
   const logItem = {
-    // 💡【修正箇所】非推奨の substr(2, 5) を slice(2, 7) に変更
     id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     date: dateStr,
-    amount: amount,
+    amount: Number(amount),
     user: userName,
     timestamp: Date.now()
   };
@@ -314,7 +318,6 @@ function renderData() {
     }
   }
 
-  // DocumentFragment による一括挿入（高速化）
   const fragment = document.createDocumentFragment();
   const logsToRender = allLogs.slice().reverse();
 
@@ -353,7 +356,6 @@ async function deleteLastLog() {
   const remoteIds = new Set(remoteLogs.map(r => r.id).filter(Boolean));
   const activePendingLogs = pendingLogs.filter(p => !remoteIds.has(p.id));
 
-  // 💡【修正箇所】自分の未送信ログだけを対象にして削除
   const myPendingLogs = activePendingLogs.filter(p => (p.user || "未設定") === userName);
   if (myPendingLogs.length > 0) {
     const lastPending = myPendingLogs[myPendingLogs.length - 1];
@@ -365,7 +367,6 @@ async function deleteLastLog() {
     return;
   }
 
-  // 💡【修正箇所】自分の同期済みログだけを対象にして削除（他人のデータを消さない）
   const myRemoteLogs = remoteLogs.filter(r => (r.user || "未設定") === userName);
   if (myRemoteLogs.length > 0) {
     const lastLog = myRemoteLogs[myRemoteLogs.length - 1];
@@ -421,7 +422,6 @@ async function deleteAllLogs() {
   }
 }
 
-// 💡【修正箇所】const宣言から window オブジェクトへの割り当てに変更（HTMLの onclick から確実に動くように補強）
 window.記録 = recordLog;
 window.直近1件削除 = deleteLastLog;
 window.csvダウンロード = downloadCSV;

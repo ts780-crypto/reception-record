@@ -30,15 +30,15 @@ function updateNetworkStatus() {
   const statusText = document.getElementById('netStatusText');
   if (!statusBadge || !statusText) return;
 
-  const isSSEOpen = eventSource && (eventSource.readyState === EventSource.OPEN);
-  const isConnected = navigator.onLine && isSSEOpen;
-
-  if (isConnected) {
+  if (!navigator.onLine) {
+    statusBadge.className = "net-badge offline";
+    statusText.textContent = "オフライン（同期停止）";
+  } else if (eventSource && eventSource.readyState === EventSource.OPEN) {
     statusBadge.className = "net-badge online";
     statusText.textContent = "リアルタイム同期中";
   } else {
     statusBadge.className = "net-badge offline";
-    statusText.textContent = "オフライン（同期停止）";
+    statusText.textContent = "接続中...";
   }
 }
 
@@ -137,7 +137,7 @@ function initRealtimeStream() {
       const rawData = res.data || {};
       remoteLogs = Object.keys(rawData).map(key => ({ key, ...rawData[key] }));
     } else {
-      const key = res.path.replace('/', '');
+      const key = res.path.split('/')[1];
       if (res.data === null) {
         remoteLogs = remoteLogs.filter(item => item.key !== key);
       } else {

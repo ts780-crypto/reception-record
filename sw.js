@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nf-app-v10';
+const CACHE_NAME = 'nf-app-v11';
 
 // 事前キャッシュ対象リスト
 const ASSETS = [

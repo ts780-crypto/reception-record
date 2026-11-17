@@ -6,7 +6,7 @@ const HISTORY_DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.fireba
 // 入力画面のパスワード設定
 const APP_PASSWORD = "nf2026";
 
-// 定数・変数（PayPayラベル付きプリセットに対応）
+// 定数・変数（PayPayラベル付きプリセット）
 const DEFAULT_PRESETS = [
   250,
   { label: "PayPay", amount: 250 },
@@ -86,7 +86,14 @@ function saveCachedRemoteLogs() {
 function loadPresets() {
   const saved = localStorage.getItem('nf_preset_amounts');
   if (saved) {
-    try { presetAmounts = JSON.parse(saved); } catch (e) { console.error("プリセット読み込みエラー", e); }
+    try {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length === 4) {
+        presetAmounts = parsed;
+      }
+    } catch (e) {
+      console.error("プリセット読み込みエラー", e);
+    }
   }
 }
 
@@ -97,7 +104,8 @@ function renderButtons() {
   const fragment = document.createDocumentFragment();
   presetAmounts.forEach(item => {
     const isObj = typeof item === 'object' && item !== null;
-    const amount = isObj ? Number(item.amount) : Number(item);
+    const rawAmount = isObj ? item.amount : item;
+    const amount = Number(String(rawAmount).replace(/[^0-9.-]/g, '')) || 0;
     const labelText = isObj && item.label ? `${item.label} ` : '';
 
     const btn = document.createElement('button');
@@ -227,63 +235,73 @@ function updateNetworkStatus() {
   renderData();
 }
 
-// モバイル端末対応：排他制御（ロック）付き一括同期＆確実な履歴保存
-async function deleteLastLog() {
-  const baseUser = document.getElementById('userName').value || "未設定";
-  const isMyRecord = (recordUser) => {
-    const u = recordUser || "未設定";
-    return u === baseUser || u.startsWith(`${baseUser} (`);
-  };
+// メイン領域と履歴アーカイブの両方に確実に同期する処理
+async function syncPendingLogs() {
+  if (!navigator.onLine || pendingLogs.length === 0 || isSyncing) return;
 
-  const remoteIds = new Set(remoteLogs.map(r => r.id).filter(Boolean));
-  const activePendingLogs = pendingLogs.filter(p => !remoteIds.has(p.id));
+  isSyncing = true;
 
-  const myPendingLogs = activePendingLogs.filter(p => isMyRecord(p.user));
-  if (myPendingLogs.length > 0) {
-    const lastPending = myPendingLogs[myPendingLogs.length - 1];
-    if (confirm(`【未送信データ】${baseUser}さんの直近の記録を取り消しますか？\n・金額: ${lastPending.amount}円`)) {
-      pendingLogs = pendingLogs.filter(p => p.id !== lastPending.id);
-      savePendingLogs();
-      renderData();
-    }
-    return;
-  }
+  try {
+    const itemsToSync = [...pendingLogs];
+    for (const item of itemsToSync) {
+      const safeAmount = Number(String(item.amount).replace(/[^0-9.-]/g, '')) || 0;
+      const payload = {
+        id: String(item.id),
+        date: String(item.date),
+        amount: safeAmount,
+        user: String(item.user || "未設定"),
+        timestamp: Number(item.timestamp || Date.now())
+      };
 
-  const myRemoteLogs = remoteLogs.filter(r => isMyRecord(r.user));
-  if (myRemoteLogs.length > 0) {
-    const lastLog = myRemoteLogs[myRemoteLogs.length - 1];
-    if (confirm(`【${baseUser}さんの直近の記録】を取り消しますか？\n・日時: ${lastLog.date}\n・金額: ${lastLog.amount}円`)) {
-      try {
-        // 1. メイン領域（moneyLogs）から削除
-        await fetch(`${DB_URL}/${lastLog.key}.json`, { method: 'DELETE' });
+      // 1. メイン領域（moneyLogs）へ未送信の場合のみ送信
+      if (!item.mainSynced) {
+        const res = await fetch(`${DB_URL}.json`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
 
-        // 2. 履歴領域（moneyLogsHistory）から同じ固有IDのデータを特定して削除
-        if (lastLog.id) {
-          const histRes = await fetch(`${HISTORY_DB_URL}.json`);
-          if (histRes.ok) {
-            const histData = await histRes.json() || {};
-            const targetHistoryKey = Object.keys(histData).find(
-              k => histData[k] && histData[k].id === lastLog.id
-            );
-            if (targetHistoryKey) {
-              await fetch(`${HISTORY_DB_URL}/${targetHistoryKey}.json`, { method: 'DELETE' });
-            }
+        if (!res.ok) throw new Error(`Main DB Error: ${res.status}`);
+        const resData = await res.json();
+
+        if (resData && resData.name) {
+          if (!remoteLogs.some(r => r.key === resData.name)) {
+            remoteLogs.push({ key: resData.name, ...payload });
           }
         }
-      } catch (err) {
-        alert("削除に失敗しました: " + err.message);
-      }
-    }
-    return;
-  }
 
-  alert(`${baseUser}さんの削除可能なデータがありません`);
+        // メイン送信済みフラグを立てて保存（リトライ時の二重登録を防止）
+        item.mainSynced = true;
+        savePendingLogs();
+      }
+
+      // 2. 削除不可能な履歴アーカイブ（moneyLogsHistory）へ送信
+      const histRes = await fetch(`${HISTORY_DB_URL}.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!histRes.ok) throw new Error(`History DB Error: ${histRes.status}`);
+
+      // 両方の保存が完了した時点でローカルキューから削除
+      pendingLogs = pendingLogs.filter(p => p.id !== item.id);
+      savePendingLogs();
+    }
+  } catch (err) {
+    console.error("同期エラー（次回自動リトライ）:", err);
+  } finally {
+    isSyncing = false;
+    saveCachedRemoteLogs();
+    renderData();
+  }
 }
 
 // --- 記録処理 ---
 function recordLog(amount, paymentMethod = '') {
   const baseUser = document.getElementById('userName').value || "未設定";
   const userName = paymentMethod ? `${baseUser} (${paymentMethod})` : baseUser;
+  const safeAmount = Number(String(amount).replace(/[^0-9.-]/g, '')) || 0;
 
   const now = new Date();
   const dateStr = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
@@ -291,9 +309,10 @@ function recordLog(amount, paymentMethod = '') {
   const logItem = {
     id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     date: dateStr,
-    amount: Number(amount),
+    amount: safeAmount,
     user: userName,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    mainSynced: false
   };
 
   pendingLogs.push(logItem);
@@ -305,7 +324,7 @@ function recordLog(amount, paymentMethod = '') {
   }
 }
 
-// --- 高速画面描画（DocumentFragment 使用） ---
+// --- 高速画面描画 ---
 function renderData() {
   const tbody = document.getElementById('logTableBody');
   if (!tbody) return;
@@ -390,7 +409,22 @@ async function deleteLastLog() {
     const lastLog = myRemoteLogs[myRemoteLogs.length - 1];
     if (confirm(`【${baseUser}さんの直近の記録】を取り消しますか？\n・日時: ${lastLog.date}\n・金額: ${lastLog.amount}円`)) {
       try {
+        // 1. メイン領域（moneyLogs）から削除
         await fetch(`${DB_URL}/${lastLog.key}.json`, { method: 'DELETE' });
+
+        // 2. 履歴領域（moneyLogsHistory）から同じ固有IDのデータを特定して削除
+        if (lastLog.id) {
+          const histRes = await fetch(`${HISTORY_DB_URL}.json`);
+          if (histRes.ok) {
+            const histData = await histRes.json() || {};
+            const targetHistoryKey = Object.keys(histData).find(
+              k => histData[k] && histData[k].id === lastLog.id
+            );
+            if (targetHistoryKey) {
+              await fetch(`${HISTORY_DB_URL}/${targetHistoryKey}.json`, { method: 'DELETE' });
+            }
+          }
+        }
       } catch (err) {
         alert("削除に失敗しました: " + err.message);
       }

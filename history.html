@@ -33,7 +33,7 @@
   </div>
 
   <!-- ステータス表示 -->
-  <div id="statusInfo" class="status-text">永久履歴データを読み込み中...</div>
+  <div id="statusInfo" class="status-text">永久履歴データに接続中...</div>
 
   <!-- 集計カード -->
   <div class="summary-box">
@@ -72,34 +72,58 @@
   <script>
     const HISTORY_DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.firebasedatabase.app/moneyLogsHistory";
     let historyLogs = [];
+    let historyEventSource = null;
 
     window.onload = function() {
-      fetchHistoryData();
+      initHistoryStream();
     };
 
-    // 削除不可能な履歴アーカイブ（moneyLogsHistory）から全データを取得
-    async function fetchHistoryData() {
+    // moneyLogsHistory のリアルタイム監視（入力・削除を即座に自動反映）
+    function initHistoryStream() {
+      if (historyEventSource) historyEventSource.close();
+
       const statusEl = document.getElementById('statusInfo');
-      try {
-        const res = await fetch(`${HISTORY_DB_URL}.json`);
-        if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+      historyEventSource = new EventSource(`${HISTORY_DB_URL}.json`);
 
-        const data = await res.json() || {};
-        
-        historyLogs = Object.keys(data).map(key => ({
-          key,
-          ...data[key]
-        }));
-
-        statusEl.textContent = `同期完了: 永久保存された全 ${historyLogs.length} 件のデータを受信しました`;
+      historyEventSource.onopen = () => {
+        statusEl.textContent = `リアルタイム同期中: 全 ${historyLogs.length} 件の永久記録を表示中`;
         statusEl.style.color = "var(--status-online-text)";
-        
+      };
+
+      historyEventSource.addEventListener('put', (e) => {
+        const res = JSON.parse(e.data);
+        if (!res) return;
+
+        if (res.path === '/') {
+          const rawData = res.data || {};
+          historyLogs = Object.keys(rawData).map(key => ({
+            key,
+            ...rawData[key]
+          }));
+        } else {
+          const key = res.path.split('/')[1];
+          if (res.data === null) {
+            historyLogs = historyLogs.filter(item => item.key !== key);
+          } else {
+            const index = historyLogs.findIndex(item => item.key === key);
+            if (index > -1) {
+              historyLogs[index] = { key, ...res.data };
+            } else {
+              historyLogs.push({ key, ...res.data });
+            }
+          }
+        }
+
+        statusEl.textContent = `リアルタイム同期中: 全 ${historyLogs.length} 件の永久記録を表示中`;
+        statusEl.style.color = "var(--status-online-text)";
         renderHistoryTable();
-      } catch (err) {
-        console.error("履歴取得エラー:", err);
-        statusEl.textContent = "データ取得エラー: " + err.message;
-        statusEl.style.color = "var(--delete-text)";
-      }
+      });
+
+      historyEventSource.onerror = (err) => {
+        console.warn("履歴ストリーム再接続待機中...", err);
+        statusEl.textContent = "再接続待機中...";
+        statusEl.style.color = "var(--cancel-text)";
+      };
     }
 
     // 画面テーブル描画

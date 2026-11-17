@@ -74,7 +74,12 @@ function authenticate(event) {
 function loadCachedRemoteLogs() {
   const cached = localStorage.getItem('nf_cached_remote_logs');
   if (cached) {
-    try { remoteLogs = JSON.parse(cached); } catch (e) { console.error("キャッシュ読み込みエラー", e); }
+    try {
+      const parsed = JSON.parse(cached);
+      remoteLogs = Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      localStorage.removeItem('nf_cached_remote_logs');
+    }
   }
 }
 
@@ -92,7 +97,7 @@ function loadPresets() {
         presetAmounts = parsed;
       }
     } catch (e) {
-      console.error("プリセット読み込みエラー", e);
+      localStorage.removeItem('nf_preset_amounts');
     }
   }
 }
@@ -205,10 +210,23 @@ function initRealtimeStream() {
   };
 }
 
-// --- ローカルキュー (localStorage) ---
+// --- ローカルキュー（壊れたデータの自動掃除付き） ---
 function loadPendingLogs() {
   const stored = localStorage.getItem('nf_pending_logs');
-  pendingLogs = stored ? JSON.parse(stored) : [];
+  if (!stored) {
+    pendingLogs = [];
+    return;
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    pendingLogs = Array.isArray(parsed)
+      ? parsed.filter(item => item && item.id && item.date && Number.isFinite(Number(item.amount)))
+      : [];
+    savePendingLogs();
+  } catch (e) {
+    pendingLogs = [];
+    localStorage.removeItem('nf_pending_logs');
+  }
 }
 
 function savePendingLogs() {
@@ -231,6 +249,8 @@ function updateNetworkStatus() {
   } else {
     statusBadge.className = "net-badge offline";
     statusText.textContent = "接続中...";
+    // SSE確立前でもオンラインなら送信を試行
+    syncPendingLogs();
   }
   renderData();
 }
@@ -240,6 +260,7 @@ async function syncPendingLogs() {
   if (!navigator.onLine || pendingLogs.length === 0 || isSyncing) return;
 
   isSyncing = true;
+  let lastErrorMsg = "";
 
   try {
     const itemsToSync = [...pendingLogs];
@@ -253,7 +274,7 @@ async function syncPendingLogs() {
         timestamp: Number(item.timestamp || Date.now())
       };
 
-      // 1. メイン領域（moneyLogs）へ未送信の場合のみ送信
+      // 1. メイン領域（moneyLogs）へ送信
       if (!item.mainSynced) {
         const res = await fetch(`${DB_URL}.json`, {
           method: 'POST',
@@ -261,7 +282,10 @@ async function syncPendingLogs() {
           body: JSON.stringify(payload)
         });
 
-        if (!res.ok) throw new Error(`Main DB Error: ${res.status}`);
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`moneyLogs(${res.status}): ${errText}`);
+        }
         const resData = await res.json();
 
         if (resData && resData.name) {
@@ -270,7 +294,6 @@ async function syncPendingLogs() {
           }
         }
 
-        // メイン送信済みフラグを立てて保存（リトライ時の二重登録を防止）
         item.mainSynced = true;
         savePendingLogs();
       }
@@ -282,18 +305,22 @@ async function syncPendingLogs() {
         body: JSON.stringify(payload)
       });
 
-      if (!histRes.ok) throw new Error(`History DB Error: ${histRes.status}`);
+      if (!histRes.ok) {
+        const errText = await histRes.text();
+        throw new Error(`moneyLogsHistory(${histRes.status}): ${errText}`);
+      }
 
       // 両方の保存が完了した時点でローカルキューから削除
       pendingLogs = pendingLogs.filter(p => p.id !== item.id);
       savePendingLogs();
     }
   } catch (err) {
-    console.error("同期エラー（次回自動リトライ）:", err);
+    console.error("同期エラー:", err);
+    lastErrorMsg = err.message;
   } finally {
     isSyncing = false;
     saveCachedRemoteLogs();
-    renderData();
+    renderData(lastErrorMsg);
   }
 }
 
@@ -325,13 +352,16 @@ function recordLog(amount, paymentMethod = '') {
 }
 
 // --- 高速画面描画 ---
-function renderData() {
+function renderData(errorMsg = '') {
   const tbody = document.getElementById('logTableBody');
   if (!tbody) return;
 
   const remoteIds = new Set(remoteLogs.map(r => r.id).filter(Boolean));
-  const activePendingLogs = pendingLogs.filter(p => !remoteIds.has(p.id));
-  const allLogs = [...remoteLogs, ...activePendingLogs.map(p => ({ ...p, isPending: true }))];
+  const activePendingLogs = pendingLogs.filter(p => !remoteIds.has(p.id) || !p.mainSynced);
+  const allLogs = [
+    ...remoteLogs,
+    ...pendingLogs.filter(p => !remoteIds.has(p.id)).map(p => ({ ...p, isPending: true }))
+  ];
 
   const count = allLogs.length;
   const sum = allLogs.reduce((total, item) => total + Number(item.amount || 0), 0);
@@ -341,7 +371,10 @@ function renderData() {
 
   const syncInfo = document.getElementById('syncInfo');
   if (syncInfo) {
-    if (!navigator.onLine && activePendingLogs.length > 0) {
+    if (errorMsg) {
+      syncInfo.textContent = `送信エラー: ${errorMsg}`;
+      syncInfo.style.color = 'var(--delete-text)';
+    } else if (activePendingLogs.length > 0) {
       syncInfo.textContent = `未送信: ${activePendingLogs.length}件`;
       syncInfo.style.color = 'var(--cancel-text)';
     } else {
@@ -365,7 +398,7 @@ function renderData() {
     const tdUser = document.createElement('td');
     tdUser.textContent = item.user || "未設定";
 
-    if (item.isPending && !navigator.onLine) {
+    if (item.isPending) {
       const tag = document.createElement('span');
       tag.className = 'pending-tag';
       tag.textContent = '未送信';

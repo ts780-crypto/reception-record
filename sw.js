@@ -1,10 +1,11 @@
-const CACHE_NAME = 'nf-app-v7';
+const CACHE_NAME = 'nf-app-v9';
 
 // 事前キャッシュ対象リスト
 const ASSETS = [
   './',
   './index.html',
   './input.html',
+  './history.html',
   './style.css',
   './app.js',
   './viewer.js',
@@ -33,29 +34,32 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// フェッチ処理（HTMLは Network-First、その他静的ファイルは Cache-First）
+// フェッチ処理
 self.addEventListener('fetch', (event) => {
   if (!event.request.url.startsWith('http')) return;
 
-  // 1. HTML（ページ遷移）リクエストは Network-First（最新版を優先取得）
+  // Firebaseへのリアルタイム通信・API通信はキャッシュせず直接通す
+  if (event.request.url.includes('firebasedatabase.app')) {
+    return;
+  }
+
+  // 1. HTML（ページ遷移）リクエストは Network-First
   if (event.request.mode === 'navigate') {
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
-          // ネットワーク取得成功時はキャッシュを更新
           const responseClone = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
           return networkResponse;
         })
         .catch(() => {
-          // オフライン時はキャッシュから返す
           return caches.match(event.request, { ignoreSearch: true });
         })
     );
     return;
   }
 
-  // 2. その他の静的アセット（CSS, JS, 画像等）は Cache-First
+  // 2. その他の静的アセットは Cache-First
   event.respondWith(
     caches.match(event.request, { ignoreSearch: true }).then((cachedResponse) => {
       if (cachedResponse) return cachedResponse;

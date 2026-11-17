@@ -228,62 +228,56 @@ function updateNetworkStatus() {
 }
 
 // モバイル端末対応：排他制御（ロック）付き一括同期＆確実な履歴保存
-async function syncPendingLogs() {
-  if (!navigator.onLine || pendingLogs.length === 0 || isSyncing) return;
+async function deleteLastLog() {
+  const baseUser = document.getElementById('userName').value || "未設定";
+  const isMyRecord = (recordUser) => {
+    const u = recordUser || "未設定";
+    return u === baseUser || u.startsWith(`${baseUser} (`);
+  };
 
-  isSyncing = true;
+  const remoteIds = new Set(remoteLogs.map(r => r.id).filter(Boolean));
+  const activePendingLogs = pendingLogs.filter(p => !remoteIds.has(p.id));
 
-  try {
-    const itemsToSync = [...pendingLogs];
-    for (const item of itemsToSync) {
-      const payload = {
-        id: String(item.id),
-        date: String(item.date),
-        amount: Number(item.amount),
-        user: String(item.user || "未設定"),
-        timestamp: Number(item.timestamp || Date.now())
-      };
-
-      // 1. メイン領域へ送信
-      const res = await fetch(`${DB_URL}.json`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-      const resData = await res.json();
-
-      // 2. 削除不可能な履歴アーカイブへ確実に同期
-      try {
-        await fetch(`${HISTORY_DB_URL}.json`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-      } catch (historyErr) {
-        console.error("履歴アーカイブ送信エラー:", historyErr);
-      }
-
-      if (resData && resData.name) {
-        if (!remoteLogs.some(r => r.key === resData.name)) {
-          remoteLogs.push({
-            key: resData.name,
-            ...payload
-          });
-        }
-      }
-
-      pendingLogs = pendingLogs.filter(p => p.id !== item.id);
+  const myPendingLogs = activePendingLogs.filter(p => isMyRecord(p.user));
+  if (myPendingLogs.length > 0) {
+    const lastPending = myPendingLogs[myPendingLogs.length - 1];
+    if (confirm(`【未送信データ】${baseUser}さんの直近の記録を取り消しますか？\n・金額: ${lastPending.amount}円`)) {
+      pendingLogs = pendingLogs.filter(p => p.id !== lastPending.id);
       savePendingLogs();
+      renderData();
     }
-  } catch (err) {
-    console.error("送信エラー:", err);
-  } finally {
-    isSyncing = false;
-    saveCachedRemoteLogs();
-    renderData();
+    return;
   }
+
+  const myRemoteLogs = remoteLogs.filter(r => isMyRecord(r.user));
+  if (myRemoteLogs.length > 0) {
+    const lastLog = myRemoteLogs[myRemoteLogs.length - 1];
+    if (confirm(`【${baseUser}さんの直近の記録】を取り消しますか？\n・日時: ${lastLog.date}\n・金額: ${lastLog.amount}円`)) {
+      try {
+        // 1. メイン領域（moneyLogs）から削除
+        await fetch(`${DB_URL}/${lastLog.key}.json`, { method: 'DELETE' });
+
+        // 2. 履歴領域（moneyLogsHistory）から同じ固有IDのデータを特定して削除
+        if (lastLog.id) {
+          const histRes = await fetch(`${HISTORY_DB_URL}.json`);
+          if (histRes.ok) {
+            const histData = await histRes.json() || {};
+            const targetHistoryKey = Object.keys(histData).find(
+              k => histData[k] && histData[k].id === lastLog.id
+            );
+            if (targetHistoryKey) {
+              await fetch(`${HISTORY_DB_URL}/${targetHistoryKey}.json`, { method: 'DELETE' });
+            }
+          }
+        }
+      } catch (err) {
+        alert("削除に失敗しました: " + err.message);
+      }
+    }
+    return;
+  }
+
+  alert(`${baseUser}さんの削除可能なデータがありません`);
 }
 
 // --- 記録処理 ---

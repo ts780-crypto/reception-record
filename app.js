@@ -7,7 +7,7 @@ const HISTORY_DB_URL = "https://nf-reception-default-rtdb.asia-southeast1.fireba
 const APP_PASSWORD = "nf2026";
 
 // 定数・変数
-const DEFAULT_PRESETS = [250, 200, 150, 100];
+const DEFAULT_PRESETS = [250, "PayPay" 250, 200, 100];
 let remoteLogs = [];   // Firebaseから同期されたデータ
 let pendingLogs = [];  // ローカル（localStorage）にある未送信データ
 let presetAmounts = [...DEFAULT_PRESETS];
@@ -130,7 +130,7 @@ function savePresets() {
 }
 
 function resetPresets() {
-  if (confirm('金額ボタンを初期設定（250円・200円・150円・100円）に戻しますか？')) {
+  if (confirm('金額ボタンを初期設定（250円・PayPay 200円・150円・100円）に戻しますか？')) {
     presetAmounts = [...DEFAULT_PRESETS];
     localStorage.removeItem('nf_preset_amounts');
     renderButtons();

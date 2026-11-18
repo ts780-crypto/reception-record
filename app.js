@@ -41,6 +41,11 @@ window.onload = function() {
   window.addEventListener('offline', updateNetworkStatus);
 
   initRealtimeStream();
+  setInterval(() => {
+    if (navigator.onLine && pendingLogs.length > 0 && !isSyncing) {
+      syncPendingLogs();
+    }
+  }, 10000);
 };
 
 // --- 認証機能 ---
@@ -321,6 +326,8 @@ async function syncPendingLogs() {
     isSyncing = false;
     saveCachedRemoteLogs();
     renderData(lastErrorMsg);
+    if (!lastErrorMsg && navigator.onLine && pendingLogs.length > 0) {
+      syncPendingLogs();
   }
 }
 

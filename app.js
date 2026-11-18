@@ -328,6 +328,7 @@ async function syncPendingLogs() {
     renderData(lastErrorMsg);
     if (!lastErrorMsg && navigator.onLine && pendingLogs.length > 0) {
       syncPendingLogs();
+    }
   }
 }
 
